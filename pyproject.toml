@@ -1,0 +1,25 @@
+[project]
+name = "etm"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "geopandas>=1.0.1",
+    "griddata>=0.1.0",
+    "matplotlib>=3.10.3",
+    "matplotlib-fontja>=1.1.0",
+    "numpy>=2.2.6",
+    "pandas>=2.2.3",
+    "pyarrow>=20.0.0",
+    "scipy>=1.15.3",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=6.29.5",
+    "keplergl>=0.3.7",
+    "ruff>=0.11.12",
+]
+[tool.setuptools]
+package-dir = {"" = "src"}
