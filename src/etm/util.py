@@ -29,7 +29,7 @@ def read_bsttxt(filename:str="./bst_all.txt"):
 def set_typhoon_track_from_df(df_list:list[dict]):
     typhoon_track = []
     for df in df_list:
-        s = TyphoonTrack.TyphoonTrack()
+        s = TyphoonTrack()
         s.typhoon_number = df["id"]
         s.df = df["df"]
         s.num_data = len(df["df"])
@@ -41,4 +41,43 @@ def read_parquet(path:str):
     df_list = [{"id": id, "df": group} for id, group in df.groupby("international_id")]
     typhoons = set_typhoon_track_from_df(df_list)
     return typhoons
+
+# 回転関数のインポート
+from etm.rotation import (
+    rotate_coordinates_around_center,
+    rotate_typhoon_track,
+    rotate_typhoon_track_projected,
+    rotate_multiple_tracks,
+    plot_original_and_rotated_tracks,
+    plot_multiple_rotations,
+    calculate_rotation_statistics
+)
+
+# 便利な関数のエイリアス
+def rotate_track(typhoon_track, center_lon, center_lat, angle_degrees, method='simple'):
+    """
+    台風経路を回転させる便利関数
+    
+    Parameters:
+    -----------
+    typhoon_track : TyphoonTrack
+        台風トラックオブジェクト
+    center_lon : float
+        回転中心の経度
+    center_lat : float
+        回転中心の緯度
+    angle_degrees : float
+        回転角度（度）
+    method : str
+        回転方法（'simple' または 'projected'）
+        
+    Returns:
+    --------
+    TyphoonTrack
+        回転後の台風トラックオブジェクト
+    """
+    if method == 'projected':
+        return rotate_typhoon_track_projected(typhoon_track, center_lon, center_lat, angle_degrees)
+    else:
+        return rotate_typhoon_track(typhoon_track, center_lon, center_lat, angle_degrees)
 
