@@ -99,7 +99,7 @@ r_array = grs80.inv(x, y, np.zeros_like(x) + center_lon,
                           np.zeros_like(y) + center_lat)[2]*0.001
 #grad_velo = cal_gradient_velocity_top(pc,r0,r_array)
 grad_velo_u, grad_velo_v = cal_gradient_velocity(pc,r0,r_array,x,y,center_lon,center_lat)
-utf_velo_u, utf_velo_v = cal_utf_velocity(pc, r0, r_array, moving_velocity=40. / 3.6, direction=90)
+utf_velo_u, utf_velo_v = cal_utf_velocity(pc, r0, r_array, moving_velocity=40. / 3.6, direction=90, lat=center_lat)  # direction: 方位角（90=東進）
 # x方向とy方向成分から絶対値を計算
 grad_velo_abs = np.hypot(grad_velo_u, grad_velo_v)
 utf_velo_abs = np.hypot(utf_velo_u, utf_velo_v)
@@ -164,7 +164,8 @@ for cnt in range(len(cyclone.hourly_data)):
     array_grad_velo_u[cnt,:,:], array_grad_velo_v[cnt,:,:] = cal_gradient_velocity(pc,r0,r_array,x,y,center_lon,center_lat)
     array_tf_velo_u[cnt,:,:], array_tf_velo_v[cnt,:,:] = cal_utf_velocity(pc,r0,r_array,
                                                                           cyclone.hourly_data.moving_velocity[cnt],
-                                                                          cyclone.hourly_data.direction[cnt])
+                                                                          cyclone.hourly_data.direction[cnt],
+                                                                          lat=center_lat)
     #u10 += [array_tf_velo[cnt][0] + array_grad_velo[cnt][0]]
     #v10 += [array_tf_velo[cnt][1] + array_grad_velo[cnt][1]]
 # %%

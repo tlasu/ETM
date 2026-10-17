@@ -3,17 +3,25 @@
 """
 
 import numpy as np
-import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
-from shapely.affinity import rotate as shapely_rotate
 import matplotlib.pyplot as plt
-from etm.TyphoonTrack import TyphoonTrack
+import pyproj
+from etm.TyphoonTrack import TyphoonTrack, geod_fwd, geod_inv
+
+
+def aeqd_crs(center_lon, center_lat):
+    """
+    回転中心を原点とする正距方位図法の座標系（中心からの距離と方位が正しく保たれる）
+    """
+    return f"+proj=aeqd +lat_0={center_lat} +lon_0={center_lon} +ellps=GRS80 +units=m +no_defs"
 
 
 def rotate_coordinates_around_center(lon, lat, center_lon, center_lat, angle_degrees):
     """
     指定された中心点（緯度経度）を軸に座標を回転させる
+    中心から各点への測地線距離を保ったまま方位角を回転させるため、
+    経緯度の度数をそのまま回転させた場合のような cos(緯度) による歪みが生じない
     
     Parameters:
     -----------
@@ -33,24 +41,19 @@ def rotate_coordinates_around_center(lon, lat, center_lon, center_lat, angle_deg
     tuple
         (回転後の経度, 回転後の緯度)
     """
-    # 角度をラジアンに変換
-    angle_rad = np.radians(angle_degrees)
-    
-    # 中心点を原点に移動
-    lon_centered = np.array(lon) - center_lon
-    lat_centered = np.array(lat) - center_lat
-    
-    # 2D回転行列を適用
-    cos_angle = np.cos(angle_rad)
-    sin_angle = np.sin(angle_rad)
-    
-    lon_rotated = lon_centered * cos_angle - lat_centered * sin_angle
-    lat_rotated = lon_centered * sin_angle + lat_centered * cos_angle
-    
-    # 中心点を元の位置に戻す
-    lon_final = lon_rotated + center_lon
-    lat_final = lat_rotated + center_lat
-    
+    lon = np.asarray(lon, dtype=float)
+    lat = np.asarray(lat, dtype=float)
+    # 中心から各点への方位角（北=0°、時計回り）と距離[m]
+    azimuth, _, distance = geod_inv(center_lon, center_lat, lon, lat)
+
+    # 反時計回りの回転は方位角を減らす方向
+    lon_final, lat_final, _ = geod_fwd(center_lon, center_lat, azimuth - angle_degrees, distance)
+
+    # 中心上の点（距離0）は方位角が定まらないためそのまま残す
+    at_center = distance == 0
+    lon_final = np.where(at_center, lon, lon_final)
+    lat_final = np.where(at_center, lat, lat_final)
+
     return lon_final, lat_final
 
 
@@ -100,9 +103,9 @@ def rotate_typhoon_track(typhoon_track, center_lon, center_lat, angle_degrees):
     return rotated_track
 
 
-def rotate_typhoon_track_projected(typhoon_track, center_lon, center_lat, angle_degrees, crs='EPSG:3857'):
+def rotate_typhoon_track_projected(typhoon_track, center_lon, center_lat, angle_degrees, crs=None):
     """
-    投影座標系を使用してより正確な回転を行う
+    投影座標系上で回転を行う
     
     Parameters:
     -----------
@@ -114,17 +117,20 @@ def rotate_typhoon_track_projected(typhoon_track, center_lon, center_lat, angle_
         回転中心の緯度
     angle_degrees : float
         回転角度（度）
-    crs : str
-        使用する投影座標系（デフォルト: Web Mercator EPSG:3857）
+    crs : str or None
+        使用する投影座標系。None（デフォルト）の場合は回転中心を原点とする正距方位図法を使用。
+        Web Mercator（EPSG:3857）などを指定すると高緯度ほど距離が歪む点に注意
         
     Returns:
     --------
     TyphoonTrack
         回転後の台風トラックオブジェクト
     """
-    from shapely.geometry import Point, LineString
     from shapely.affinity import rotate
-    
+
+    if crs is None:
+        crs = aeqd_crs(center_lon, center_lat)
+
     # 元のDataFrameからGeoDataFrameを作成
     original_df = typhoon_track.df.copy()
     geometry = [Point(lon, lat) for lon, lat in zip(original_df['LON'], original_df['LAT'])]
@@ -134,10 +140,8 @@ def rotate_typhoon_track_projected(typhoon_track, center_lon, center_lat, angle_
     gdf_projected = gdf.to_crs(crs)
     
     # 回転中心も投影座標系に変換
-    center_point = gpd.GeoDataFrame(
-        {'id': [1]}, geometry=[Point(center_lon, center_lat)], crs='EPSG:4326'
-    ).to_crs(crs)
-    center_x, center_y = center_point.geometry.iloc[0].x, center_point.geometry.iloc[0].y
+    transformer = pyproj.Transformer.from_crs('EPSG:4326', crs, always_xy=True)
+    center_x, center_y = transformer.transform(float(center_lon), float(center_lat))
     
     # 各点を回転中心を軸に回転
     rotated_geometries = []

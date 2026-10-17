@@ -2,8 +2,49 @@ from shapely.geometry import LineString
 import numpy as np
 import pandas as pd
 import geopandas as gpd
-from pyproj import Transformer
 import pyproj
+
+# 距離・方位は GRS80 楕円体上の測地線で計算する
+GEOD = pyproj.Geod(ellps="GRS80")
+
+
+def _geod_call(func, *args):
+    """
+    pyproj.Geod の計算を配列で行い、入力と同じ形状の配列を返す
+    pyproj は要素数1の配列をスカラー用の高速パスで処理するため、
+    NumPy の DeprecationWarning が出て戻り値もスカラーになる。これを避けるため要素数1はスカラーで計算する
+    """
+    arrays = np.broadcast_arrays(*(np.asarray(a, dtype=float) for a in args))
+    if arrays[0].size == 1:
+        results = func(*(a.item() for a in arrays))
+        return tuple(np.full(arrays[0].shape, r) for r in results)
+    return func(*arrays)
+
+
+def geod_inv(lons1, lats1, lons2, lats2):
+    """
+    2点間の方位角[度]、逆方位角[度]、測地線距離[m]（Geod.inv の配列版）
+    """
+    return _geod_call(GEOD.inv, lons1, lats1, lons2, lats2)
+
+
+def geod_fwd(lons, lats, az, dist):
+    """
+    始点・方位角・距離から終点の経度、緯度、逆方位角（Geod.fwd の配列版）
+    """
+    return _geod_call(GEOD.fwd, lons, lats, az, dist)
+
+
+def segment_distances(df: pd.DataFrame) -> np.ndarray:
+    """
+    隣接する経路点間の測地線距離[m]を返す（先頭は0）
+    """
+    lons = df["LON"].to_numpy(dtype=float)
+    lats = df["LAT"].to_numpy(dtype=float)
+    distances = np.zeros(len(df))
+    if len(df) > 1:
+        distances[1:] = geod_inv(lons[:-1], lats[:-1], lons[1:], lats[1:])[2]
+    return distances
 
 def parse_header(line: str):
     """
@@ -180,12 +221,14 @@ class TyphoonTrack:
         """
         DataFrameに進行方向（度）を計算して追加する
         """
-        grs80 = pyproj.Geod(ellps='GRS80')
-        df = self.df
-        df["LON1"] = df["LON"].shift(-1)
-        df["LAT1"] = df["LAT"].shift(-1)
-        df["direction"] = df.apply(lambda x: grs80.inv(x["LON"],x["LAT"],x["LON1"],x["LAT1"])[0],axis=1)
-        result_df = df.drop(['LON1', 'LAT1'], axis=1)
+        result_df = self.df.copy()
+        lons = result_df["LON"].to_numpy(dtype=float)
+        lats = result_df["LAT"].to_numpy(dtype=float)
+        # 方位角（北=0°、時計回り）。次の点がない最終点はNaN
+        direction = np.full(len(result_df), np.nan)
+        if len(result_df) > 1:
+            direction[:-1] = geod_inv(lons[:-1], lats[:-1], lons[1:], lats[1:])[0]
+        result_df["direction"] = direction
         # DataFrameを更新したので、set_linestring()が自動実行される
         self.df = result_df
 
@@ -290,16 +333,8 @@ def interpolate_by_cumulative_distance(data, constant_velocity: float, time_inte
     if df is None or df.empty or len(df) < 2:
         raise ValueError("データが空または1点のみです")
     
-    # 座標変換：wgs84からjgd2011に変換する
-    epsg4326_to_epsg6677 = Transformer.from_crs("epsg:4326", "epsg:6677", always_xy=True)
-    df["x"], df["y"] = epsg4326_to_epsg6677.transform(df["LON"], df["LAT"])
-    
-    # 各点間の距離を計算
-    df["segment_distance"] = 0.0
-    for i in range(1, len(df)):
-        dx = df["x"].iloc[i] - df["x"].iloc[i-1]
-        dy = df["y"].iloc[i] - df["y"].iloc[i-1]
-        df.loc[i, "segment_distance"] = np.sqrt(dx**2 + dy**2)
+    # 各点間の測地線距離[m]を計算
+    df["segment_distance"] = segment_distances(df)
     
     # 累積距離を計算
     df["cumulative_distance"] = df["segment_distance"].cumsum()
@@ -393,11 +428,9 @@ def calculate_moving_velocity(data):
     if df is None or df.empty or len(df) < 2:
         raise ValueError("データが空または2点未満です")
     
-    # 実際のトラックから移動速度を計算
-    # 座標変換：wgs84からjgd2011に変換する
-    epsg4326_to_epsg6677 = Transformer.from_crs("epsg:4326", "epsg:6677", always_xy=True)
-    df["x"], df["y"] = epsg4326_to_epsg6677.transform(df["LON"], df["LAT"])
-    df["gap_distance"] = np.sqrt(df["x"].diff()**2 + df["y"].diff()**2)
+    # 実際のトラックから移動速度を計算（測地線距離[m]）
+    df["gap_distance"] = segment_distances(df)
+    df.loc[df.index[0], "gap_distance"] = np.nan
     df["moving_velocity"] = df["gap_distance"] / (df["ISO_TIME"].diff() / pd.Timedelta(seconds=1))
     df["moving_velocity"] = df["moving_velocity"].fillna(0)
     
@@ -407,16 +440,8 @@ def add_cumulative_distance(df):
     """
     累積距離を計算してDataFrameに追加する
     """
-    # 座標変換：wgs84からjgd2011に変換する
-    epsg4326_to_epsg6677 = Transformer.from_crs("epsg:4326", "epsg:6677", always_xy=True)
-    df["x"], df["y"] = epsg4326_to_epsg6677.transform(df["LON"], df["LAT"])
-    
-    # 各点間の距離を計算
-    df["segment_distance"] = 0.0
-    for i in range(1, len(df)):
-        dx = df["x"].iloc[i] - df["x"].iloc[i-1]
-        dy = df["y"].iloc[i] - df["y"].iloc[i-1]
-        df.loc[i, "segment_distance"] = np.sqrt(dx**2 + dy**2)
+    # 各点間の測地線距離[m]を計算
+    df["segment_distance"] = segment_distances(df)
     
     # 累積距離を計算
     df["cumulative_distance"] = df["segment_distance"].cumsum()
