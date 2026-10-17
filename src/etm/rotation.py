@@ -6,7 +6,8 @@ import numpy as np
 import geopandas as gpd
 from shapely.geometry import Point
 import matplotlib.pyplot as plt
-from etm.TyphoonTrack import GEOD, TyphoonTrack
+import pyproj
+from etm.TyphoonTrack import TyphoonTrack, geod_fwd, geod_inv
 
 
 def aeqd_crs(center_lon, center_lat):
@@ -42,14 +43,11 @@ def rotate_coordinates_around_center(lon, lat, center_lon, center_lat, angle_deg
     """
     lon = np.asarray(lon, dtype=float)
     lat = np.asarray(lat, dtype=float)
-    center_lons = np.full(lon.shape, center_lon, dtype=float)
-    center_lats = np.full(lat.shape, center_lat, dtype=float)
-
     # 中心から各点への方位角（北=0°、時計回り）と距離[m]
-    azimuth, _, distance = GEOD.inv(center_lons, center_lats, lon, lat)
+    azimuth, _, distance = geod_inv(center_lon, center_lat, lon, lat)
 
     # 反時計回りの回転は方位角を減らす方向
-    lon_final, lat_final, _ = GEOD.fwd(center_lons, center_lats, azimuth - angle_degrees, distance)
+    lon_final, lat_final, _ = geod_fwd(center_lon, center_lat, azimuth - angle_degrees, distance)
 
     # 中心上の点（距離0）は方位角が定まらないためそのまま残す
     at_center = distance == 0
@@ -142,10 +140,8 @@ def rotate_typhoon_track_projected(typhoon_track, center_lon, center_lat, angle_
     gdf_projected = gdf.to_crs(crs)
     
     # 回転中心も投影座標系に変換
-    center_point = gpd.GeoDataFrame(
-        {'id': [1]}, geometry=[Point(center_lon, center_lat)], crs='EPSG:4326'
-    ).to_crs(crs)
-    center_x, center_y = center_point.geometry.iloc[0].x, center_point.geometry.iloc[0].y
+    transformer = pyproj.Transformer.from_crs('EPSG:4326', crs, always_xy=True)
+    center_x, center_y = transformer.transform(float(center_lon), float(center_lat))
     
     # 各点を回転中心を軸に回転
     rotated_geometries = []

@@ -1,6 +1,6 @@
 import numpy as np
 
-from etm.TyphoonTrack import GEOD
+from etm.TyphoonTrack import geod_inv
 
 P_CONSTANT = 1013
 RHOA = 1.22
@@ -82,8 +82,7 @@ def cal_gradient_velocity(center_pressure:float,
     # c1 = cal_c1(Ugr, r0, r, x0, y0, x, y)
     c1 = 0.66
     # 台風中心から計算点への方位角（北=0°、時計回り）を数学角（東=0°、反時計回り）に変換
-    x, y = np.broadcast_arrays(np.asarray(x, dtype=float), np.asarray(y, dtype=float))
-    azimuth = GEOD.inv(np.full(x.shape, x0, dtype=float), np.full(y.shape, y0, dtype=float), x, y)[0]
+    azimuth = geod_inv(x0, y0, x, y)[0]
     theta = np.deg2rad(90 - azimuth)
     # 反時計回りの接線方向（+90°）から中心向きに30°吹き込む
     ugr_x = c1 * Ugr * np.cos(theta + np.deg2rad(90 + 30))

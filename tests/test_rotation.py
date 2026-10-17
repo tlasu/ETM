@@ -32,7 +32,7 @@ def test_rotation_does_not_modify_original(track):
 
 
 from etm.rotation import rotate_coordinates_around_center  # noqa: E402
-from etm.TyphoonTrack import GEOD  # noqa: E402
+from etm.TyphoonTrack import geod_inv  # noqa: E402
 
 
 @pytest.mark.parametrize("center_lat", [10.0, 35.0, 55.0])
@@ -43,15 +43,15 @@ def test_rotation_preserves_distance_from_center(center_lat, angle):
     lat = np.array([center_lat - 5, center_lat + 3, center_lat])
     rlon, rlat = rotate_coordinates_around_center(lon, lat, 145.0, center_lat, angle)
     c_lon, c_lat = np.full(3, 145.0), np.full(3, center_lat)
-    d_before = GEOD.inv(c_lon, c_lat, lon, lat)[2]
-    d_after = GEOD.inv(c_lon, c_lat, rlon, rlat)[2]
+    d_before = geod_inv(c_lon, c_lat, lon, lat)[2]
+    d_after = geod_inv(c_lon, c_lat, rlon, rlat)[2]
     np.testing.assert_allclose(d_after, d_before, rtol=1e-9)
 
 
 def test_rotation_counterclockwise():
     """北にある点を90°回すと西に来る（正の角度は反時計回り）"""
     rlon, rlat = rotate_coordinates_around_center([135.0], [40.0], 135.0, 35.0, 90)
-    az = GEOD.inv(135.0, 35.0, rlon[0], rlat[0])[0]
+    az = geod_inv(135.0, 35.0, rlon[0], rlat[0])[0]
     assert az == pytest.approx(-90, abs=1e-6)
 
 

@@ -5,7 +5,7 @@ description = "Empirical Typhoon Model: 気象庁ベストトラックから台�
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "geopandas>=1.0.1",
+    "geopandas>=1.1.0",
     "matplotlib>=3.10.3",
     "numpy>=2.2.6",
     "pandas>=2.2.3",
@@ -35,3 +35,4 @@ packages = ["src/etm"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = ["error::DeprecationWarning"]

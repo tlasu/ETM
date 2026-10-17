@@ -63,11 +63,11 @@ def test_set_direction_matches_utf_convention(make_track):
 def test_gradient_wind_direction_is_geodesic(x0, y0, dlon, dlat):
     """風向は中心からの方位に対して反時計回り接線から30°内向き（数学角で+120°）"""
     from etm.etm import cal_gradient_velocity
-    from etm.TyphoonTrack import GEOD
+    from etm.TyphoonTrack import geod_inv
 
     x, y = np.array([x0 + dlon]), np.array([y0 + dlat])
     ux, uy = cal_gradient_velocity(960, 50, np.array([100.0]), x, y, x0, y0)
-    azimuth = GEOD.inv(x0, y0, x[0], y[0])[0]
+    azimuth = geod_inv(x0, y0, x[0], y[0])[0]
     theta = 90 - azimuth
     wind_angle = np.degrees(np.arctan2(uy[0], ux[0]))
     assert (wind_angle - theta - 120 + 180) % 360 - 180 == pytest.approx(0, abs=1e-6)

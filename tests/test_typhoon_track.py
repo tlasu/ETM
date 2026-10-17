@@ -52,3 +52,15 @@ def test_set_direction(make_track):
     assert direction.iloc[0] == pytest.approx(90, abs=0.5)  # 東進
     assert direction.iloc[1] == pytest.approx(0, abs=1e-6)  # 北進
     assert np.isnan(direction.iloc[2])
+
+
+@pytest.mark.parametrize("shape", [(1,), (1, 1), (3,)])
+def test_geod_inv_keeps_array_shape(shape):
+    """要素数1の配列でも警告を出さず、入力と同じ形状の配列を返す"""
+    from etm.TyphoonTrack import geod_inv
+
+    lons = np.full(shape, 131.0)
+    lats = np.full(shape, 20.0)
+    az, _, dist = geod_inv(130.0, 20.0, lons, lats)
+    assert isinstance(dist, np.ndarray) and dist.shape == shape
+    np.testing.assert_allclose(az, 89.8, atol=0.1)

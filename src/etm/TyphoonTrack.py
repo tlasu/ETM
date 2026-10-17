@@ -8,6 +8,33 @@ import pyproj
 GEOD = pyproj.Geod(ellps="GRS80")
 
 
+def _geod_call(func, *args):
+    """
+    pyproj.Geod の計算を配列で行い、入力と同じ形状の配列を返す
+    pyproj は要素数1の配列をスカラー用の高速パスで処理するため、
+    NumPy の DeprecationWarning が出て戻り値もスカラーになる。これを避けるため要素数1はスカラーで計算する
+    """
+    arrays = np.broadcast_arrays(*(np.asarray(a, dtype=float) for a in args))
+    if arrays[0].size == 1:
+        results = func(*(a.item() for a in arrays))
+        return tuple(np.full(arrays[0].shape, r) for r in results)
+    return func(*arrays)
+
+
+def geod_inv(lons1, lats1, lons2, lats2):
+    """
+    2点間の方位角[度]、逆方位角[度]、測地線距離[m]（Geod.inv の配列版）
+    """
+    return _geod_call(GEOD.inv, lons1, lats1, lons2, lats2)
+
+
+def geod_fwd(lons, lats, az, dist):
+    """
+    始点・方位角・距離から終点の経度、緯度、逆方位角（Geod.fwd の配列版）
+    """
+    return _geod_call(GEOD.fwd, lons, lats, az, dist)
+
+
 def segment_distances(df: pd.DataFrame) -> np.ndarray:
     """
     隣接する経路点間の測地線距離[m]を返す（先頭は0）
@@ -16,7 +43,7 @@ def segment_distances(df: pd.DataFrame) -> np.ndarray:
     lats = df["LAT"].to_numpy(dtype=float)
     distances = np.zeros(len(df))
     if len(df) > 1:
-        distances[1:] = GEOD.inv(lons[:-1], lats[:-1], lons[1:], lats[1:])[2]
+        distances[1:] = geod_inv(lons[:-1], lats[:-1], lons[1:], lats[1:])[2]
     return distances
 
 def parse_header(line: str):
@@ -200,7 +227,7 @@ class TyphoonTrack:
         # 方位角（北=0°、時計回り）。次の点がない最終点はNaN
         direction = np.full(len(result_df), np.nan)
         if len(result_df) > 1:
-            direction[:-1] = GEOD.inv(lons[:-1], lats[:-1], lons[1:], lats[1:])[0]
+            direction[:-1] = geod_inv(lons[:-1], lats[:-1], lons[1:], lats[1:])[0]
         result_df["direction"] = direction
         # DataFrameを更新したので、set_linestring()が自動実行される
         self.df = result_df
