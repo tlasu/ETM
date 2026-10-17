@@ -1,4 +1,4 @@
-from etm.TyphoonTrack import TyphoonTrack
+from etm.TyphoonTrack import TyphoonTrack, parse_bst_lines
 import pandas as pd
 
 def set_typhoon_track(typhoon_data:list[dict]):
@@ -13,18 +13,15 @@ def read_bsttxt(filename:str="./bst_all.txt"):
     """
     気象庁ベストトラックデータファイルを読み込む
     """
-    with open(filename, "r") as f:
-        l_strip = [s.replace("\n","") for s in f.readlines()]
-    typhoon_data = []
-    cnt = 0
-    while cnt < len(l_strip):
-        header = l_strip[cnt]
-        track_num_data = int(header.split()[2])
-        cnt += 1
-        data = l_strip[cnt:cnt+track_num_data]
-        cnt += track_num_data
-        typhoon_data += [{"header":header, "data": data}]
-    return set_typhoon_track(typhoon_data)
+    with open(filename, "r", encoding="ascii") as f:
+        lines = f.read().splitlines()
+    df = parse_bst_lines(lines)
+    typhoons = []
+    for _, group in df.groupby("track_index", sort=True):
+        s = TyphoonTrack()
+        s.df = group.drop(columns="track_index").reset_index(drop=True)
+        typhoons.append(s)
+    return typhoons
 
 def set_typhoon_track_from_df(df_list:list[dict]):
     typhoon_track = []

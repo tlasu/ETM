@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -8,6 +10,8 @@ from etm.TyphoonTrack import (
     interpolate_by_cumulative_distance,
     segment_distances,
 )
+
+BST2023 = Path(__file__).parents[1] / "jma-bst" / "bst2023.txt"
 
 
 def test_segment_distances_geodesic():
@@ -64,3 +68,50 @@ def test_geod_inv_keeps_array_shape(shape):
     az, _, dist = geod_inv(130.0, 20.0, lons, lats)
     assert isinstance(dist, np.ndarray) and dist.shape == shape
     np.testing.assert_allclose(az, 89.8, atol=0.1)
+
+
+def test_read_bsttxt_matches_line_parser():
+    """一括パーサーの結果が1行ずつのパーサーと一致する"""
+    from etm import util
+    from etm.TyphoonTrack import TyphoonTrack
+
+    path = BST2023
+    new = util.read_bsttxt(path)
+    lines = open(path, encoding="ascii").read().splitlines()
+    old, c = [], 0
+    while c < len(lines):
+        n = int(lines[c].split()[2])
+        t = TyphoonTrack()
+        t.read_bst({"header": lines[c], "data": lines[c + 1:c + 1 + n]})
+        old.append(t)
+        c += n + 1
+    assert len(new) == len(old) > 0
+    for a, b in zip(old, new):
+        assert a.name == b.name and a.typhoon_number == b.typhoon_number
+        # 旧パーサーは欠損を None、新パーサーは NaN で表す
+        pd.testing.assert_frame_equal(a.df.fillna(np.nan).infer_objects(), b.df, check_dtype=False)
+
+
+def test_parse_bst_lines_rejects_wrong_count():
+    from etm.TyphoonTrack import parse_bst_lines
+
+    lines = open(BST2023, encoding="ascii").read().splitlines()
+    with pytest.raises(ValueError, match="一致しません"):
+        parse_bst_lines(lines[:-1])
+
+
+def test_gdf_is_created_lazily(make_track):
+    track = make_track([130.0, 131.0], [20.0, 21.0])
+    assert track._gdf is None
+    assert track.gdf.geometry.iloc[0].coords[:] == [(130.0, 20.0), (131.0, 21.0)]
+
+
+def test_gdf_warns_on_nan(make_track):
+    track = make_track([130.0, np.nan], [20.0, 21.0])
+    with pytest.warns(UserWarning, match="NaN"):
+        assert track.gdf is None
+
+
+def test_set_rmax_unknown_model(make_track):
+    with pytest.raises(ValueError):
+        make_track([130.0, 131.0], [20.0, 21.0]).set_Rmax("unknown")

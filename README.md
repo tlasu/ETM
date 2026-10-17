@@ -8,6 +8,24 @@ uv sync          # パッケージ（etm）と開発用依存をインストー�
 uv run pytest    # テスト実行
 ```
 
+## 使い方
+
+```python
+from etm import util
+from etm.domain import Grid
+from etm.field import compute_wind_field
+
+typhoons = util.read_bsttxt("jma-bst/bst_all.txt")  # または util.read_parquet(...)
+track = next(t for t in typhoons if t.name == "HAGIBIS" and t.season == 2019)
+
+grid = Grid.from_extent(130, 150, 25, 45, resolution=0.1)  # 投影格子は Grid.from_projected(x, y, "EPSG:6677")
+ds = compute_wind_field(track, grid, dt_hours=1.0, rmax="kokuso", start="2019-10-11", end="2019-10-13")
+ds.to_netcdf("hagibis.nc")  # pressure, u10, v10, wind_speed（次元: time, y, x）
+```
+
+- `rmax`: 最大風速半径。数値[km]で一定値、または `"kokuso"`, `"toyoda"`, `"pari"`, `"kisho"` のモデル名
+- 詳しい例は `example/cal.py`
+
 ## 単位・座標の約束
 
 - 距離 `r`, `r0`: km（内部でコリオリ項は m に換算）
