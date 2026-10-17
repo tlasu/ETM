@@ -3,8 +3,6 @@
 台風経路回転のテストとデバッグ
 """
 import sys
-import os
-sys.path.append('src')
 
 import etm.util as util
 import pandas as pd
