@@ -29,3 +29,36 @@ def test_rotation_does_not_modify_original(track):
     before = track.df[["LON", "LAT"]].copy()
     rotate_typhoon_track(track, 130.0, 30.0, 90)
     np.testing.assert_array_equal(track.df[["LON", "LAT"]], before)
+
+
+from etm.rotation import rotate_coordinates_around_center  # noqa: E402
+from etm.TyphoonTrack import GEOD  # noqa: E402
+
+
+@pytest.mark.parametrize("center_lat", [10.0, 35.0, 55.0])
+@pytest.mark.parametrize("angle", [30, 90, 200])
+def test_rotation_preserves_distance_from_center(center_lat, angle):
+    """高緯度でも回転中心からの距離が保たれる"""
+    lon = np.array([140.0, 145.0, 150.0])
+    lat = np.array([center_lat - 5, center_lat + 3, center_lat])
+    rlon, rlat = rotate_coordinates_around_center(lon, lat, 145.0, center_lat, angle)
+    c_lon, c_lat = np.full(3, 145.0), np.full(3, center_lat)
+    d_before = GEOD.inv(c_lon, c_lat, lon, lat)[2]
+    d_after = GEOD.inv(c_lon, c_lat, rlon, rlat)[2]
+    np.testing.assert_allclose(d_after, d_before, rtol=1e-9)
+
+
+def test_rotation_counterclockwise():
+    """北にある点を90°回すと西に来る（正の角度は反時計回り）"""
+    rlon, rlat = rotate_coordinates_around_center([135.0], [40.0], 135.0, 35.0, 90)
+    az = GEOD.inv(135.0, 35.0, rlon[0], rlat[0])[0]
+    assert az == pytest.approx(-90, abs=1e-6)
+
+
+@pytest.mark.parametrize("center_lat", [10.0, 50.0])
+def test_projected_matches_geodesic_rotation(track, center_lat):
+    """正距方位図法での回転と測地線での回転は一致する"""
+    a = rotate_typhoon_track(track, 130.0, center_lat, 60)
+    b = rotate_typhoon_track_projected(track, 130.0, center_lat, 60)
+    np.testing.assert_allclose(a.df["LON"], b.df["LON"], atol=1e-6)
+    np.testing.assert_allclose(a.df["LAT"], b.df["LAT"], atol=1e-6)

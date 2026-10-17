@@ -1,5 +1,7 @@
 import numpy as np
 
+from etm.TyphoonTrack import GEOD
+
 P_CONSTANT = 1013
 RHOA = 1.22
 OMEGA = 7.29e-5  # 地球の自転角速度[rad/s]
@@ -79,10 +81,13 @@ def cal_gradient_velocity(center_pressure:float,
     Ugr = cal_gradient_velocity_top(center_pressure, r0, r, lat)
     # c1 = cal_c1(Ugr, r0, r, x0, y0, x, y)
     c1 = 0.66
-    dx = x - x0
-    dy = y - y0
-    ugr_x = c1 * Ugr * np.cos(np.arctan2(dy, dx) + np.deg2rad(90 + 30))
-    ugr_y = c1 * Ugr * np.sin(np.arctan2(dy, dx) + np.deg2rad(90 + 30))
+    # 台風中心から計算点への方位角（北=0°、時計回り）を数学角（東=0°、反時計回り）に変換
+    x, y = np.broadcast_arrays(np.asarray(x, dtype=float), np.asarray(y, dtype=float))
+    azimuth = GEOD.inv(np.full(x.shape, x0, dtype=float), np.full(y.shape, y0, dtype=float), x, y)[0]
+    theta = np.deg2rad(90 - azimuth)
+    # 反時計回りの接線方向（+90°）から中心向きに30°吹き込む
+    ugr_x = c1 * Ugr * np.cos(theta + np.deg2rad(90 + 30))
+    ugr_y = c1 * Ugr * np.sin(theta + np.deg2rad(90 + 30))
     return ugr_x, ugr_y
 
 def cal_c1(urg, r0=50, r=None,x0=0,y0=0,x=0,y=0):

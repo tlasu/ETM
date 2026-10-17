@@ -17,6 +17,7 @@ def make_track():
             "LAT": lats,
             "LON": lons,
             "PRES": [960] * n,
+            "WIND": [80] * n,
         })
         track = TyphoonTrack()
         track.df = df
