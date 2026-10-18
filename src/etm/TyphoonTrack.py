@@ -1,4 +1,6 @@
 from shapely.geometry import LineString
+import warnings
+
 import numpy as np
 import pandas as pd
 import geopandas as gpd
@@ -130,6 +132,109 @@ def parse_time(time_str:str):
         dt = dt.replace(year=dt.year - 100)
     return dt
 
+BST_COLUMNS = [
+    "international_id", "tropical_cyclone_id", "NAME", "SEASON",
+    "ISO_TIME", "indicator", "grade", "LAT", "LON", "PRES", "WIND",
+    "r50_dir", "r50_long", "r50_short", "r30_dir", "r30_long", "r30_short", "landfall"
+]
+
+def _slice_number(lines: pd.Series, start: int, stop: int) -> pd.Series:
+    """
+    固定長の列を数値に変換する（空欄はNaN）
+    """
+    s = lines.str.slice(start, stop).str.strip()
+    return pd.to_numeric(s.mask(s == ""))
+
+def parse_bst_lines(lines: list[str]) -> pd.DataFrame:
+    """
+    ベストトラックの全行（ヘッダー＋データ行）を一括でパースし、全台風分のDataFrameを返す
+    各行がどの台風に属するかは track_index 列（ファイル内の出現順）で表す
+    """
+    lines = pd.Series(lines, dtype=str)
+    is_header = lines.str.startswith("66666")
+    track_index = is_header.cumsum() - 1
+    if not is_header.iloc[0]:
+        raise ValueError("先頭行がヘッダー行（66666）ではありません")
+
+    headers = lines[is_header].reset_index(drop=True)
+    ndata = headers.str.slice(12, 15).astype(int)
+    counts = (~is_header).groupby(track_index).sum().reset_index(drop=True)
+    if not (ndata == counts).all():
+        bad = headers[ndata != counts].str.slice(6, 10).tolist()
+        raise ValueError(f"ヘッダーのデータ数と実際の行数が一致しません: {bad}")
+
+    data = lines[~is_header].reset_index(drop=True)
+    data_track = track_index[~is_header].reset_index(drop=True)
+
+    # 2桁の年: 51-99 -> 1951-1999, 00-50 -> 2000-2050
+    yy = data.str.slice(0, 2).astype(int)
+    year = np.where(yy > 50, 1900 + yy, 2000 + yy)
+    iso_time = pd.to_datetime(pd.DataFrame({
+        "year": year,
+        "month": data.str.slice(2, 4).astype(int),
+        "day": data.str.slice(4, 6).astype(int),
+        "hour": data.str.slice(6, 8).astype(int),
+    }))
+
+    df = pd.DataFrame({
+        "international_id": headers.str.slice(6, 10).to_numpy()[data_track],
+        "tropical_cyclone_id": headers.str.slice(16, 20).to_numpy()[data_track],
+        "NAME": headers.str.slice(30, 50).str.strip().to_numpy()[data_track],
+        "SEASON": year,
+        "ISO_TIME": iso_time,
+        "indicator": data.str.slice(9, 12),
+        "grade": data.str.slice(13, 14),
+        "LAT": _slice_number(data, 15, 18) * 0.1,
+        "LON": _slice_number(data, 19, 23) * 0.1,
+        "PRES": _slice_number(data, 24, 28),
+        "WIND": _slice_number(data, 33, 36),
+        "r50_dir": data.str.slice(41, 42),
+        "r50_long": _slice_number(data, 42, 46),
+        "r50_short": _slice_number(data, 47, 51),
+        "r30_dir": data.str.slice(53, 54),
+        "r30_long": _slice_number(data, 54, 58),
+        "r30_short": _slice_number(data, 59, 63),
+        "landfall": data.str.slice(71, 72),
+        "track_index": data_track,
+    })
+    return df
+
+def cal_rmax(df: pd.DataFrame, model: str = "kokuso") -> pd.Series:
+    """
+    Rmax（最大風速半径[km]）を各種モデルで計算する
+    model: "toyoda", "kokuso", "pari", "kisho" から選択
+    """
+    Pc = df["PRES"]
+    if model == "toyoda":
+        R25 = (df["r50_long"] + df["r50_short"]) * 0.5
+        R15 = (df["r30_long"] + df["r30_short"]) * 0.5
+        Vmax = df["WIND"] * 0.514 # knot -> m/s
+
+        # NaNを0に置換  
+        R25 = R25.fillna(0)
+        R15 = R15.fillna(0)
+        Vmax = Vmax.fillna(0)
+        LAT = df["LAT"].fillna(0)
+
+        rmax = np.where(
+            LAT <= 20,
+            -1.17 * Vmax - 0.004 * R25 + 0.03 * R15 + 3.54 * LAT + 38.1,
+            -1.50 * Vmax - 0.090 * R25 + 0.09 * R15 + 1.54 * LAT + 68.8
+        )
+    elif model == "kokuso":
+        rmax = np.where(
+            Pc <= 950,
+            80 - 0.769 * (950-Pc),
+            80 + 1.633 * (Pc-950)
+        )
+    elif model == "pari":
+        rmax = 94.89 * np.exp((Pc - 967)/61.5)
+    elif model == "kisho":
+        rmax = 52.125 * np.exp((Pc - 952.7)/44.09)
+    else:
+        raise ValueError(f"未対応のRmaxモデルです: {model}")
+    return pd.Series(rmax, index=df.index, name="Rmax")
+
 class TyphoonTrack:
     """
     台風1個分のトラックデータを管理するクラス
@@ -144,7 +249,7 @@ class TyphoonTrack:
         self.name:str|None = None
         self.season:int|None = None
         self._df:pd.DataFrame|None = None
-        self.gdf: gpd.GeoDataFrame | None = None
+        self._gdf: gpd.GeoDataFrame | None = None
         pass
     
     @property
@@ -157,16 +262,30 @@ class TyphoonTrack:
     @df.setter
     def df(self, value):
         """
-        DataFrameを設定し、設定後に自動的にLinestringを更新する
+        DataFrameを設定し、台風情報のプロパティを更新する
+        経路のLineString（gdf）は参照時に作成する
         """
         self._df = value
+        self._gdf = None
         if self._df is not None and not self._df.empty:
+            self._set_properties()
+
+    @property
+    def gdf(self) -> gpd.GeoDataFrame | None:
+        """
+        経路のLineStringを持つGeoDataFrame（初回参照時に作成）
+        LON/LATにNaNが含まれる場合は警告を出してNoneを返す
+        """
+        if self._gdf is None and self._df is not None and not self._df.empty:
             try:
                 self._set_linestring()
-                self._set_properties()
             except (AssertionError, ValueError) as e:
-                print(f"警告: LineString設定中にエラーが発生しました: {e}")
-                self.gdf = None
+                warnings.warn(f"LineString設定中にエラーが発生しました: {e}", stacklevel=2)
+        return self._gdf
+
+    @gdf.setter
+    def gdf(self, value):
+        self._gdf = value
     
     def _set_properties(self):
         _df = self.df
@@ -180,7 +299,7 @@ class TyphoonTrack:
         _df = self.df
         assert not _df["LON"].isna().any(), "LONにNaNが含まれています"
         assert not _df["LAT"].isna().any(), "LATにNaNが含まれています"
-        self.gdf = gpd.GeoDataFrame(geometry = [LineString(_df[["LON","LAT"]])])
+        self._gdf = gpd.GeoDataFrame(geometry = [LineString(_df[["LON","LAT"]])])
         pass
 
     def properties(self):
@@ -234,40 +353,11 @@ class TyphoonTrack:
 
     def set_Rmax(self, model = "kokuso"):
         """
-        Rmax（最大風速半径）を各種モデルで計算し、DataFrameに追加して返す
+        Rmax（最大風速半径[km]）を各種モデルで計算し、DataFrameに追加する
         model: "toyoda", "kokuso", "pari", "kisho" から選択
         """
-        df = self.df
-        Pc = df["PRES"]
-        if model == "toyoda":
-            R25 = (df["r50_long"] + df["r50_short"]) * 0.5
-            R15 = (df["r30_long"] + df["r30_short"]) * 0.5
-            Vmax = df["WIND"] * 0.514 # knot -> m/s
-
-            # NaNを0に置換  
-            R25 = R25.fillna(0)
-            R15 = R15.fillna(0)
-            Vmax = Vmax.fillna(0)
-            LAT = df["LAT"].fillna(0)
-
-            df["Rmax"] = np.where(
-                LAT <= 20,
-                -1.17 * Vmax - 0.004 * R25 + 0.03 * R15 + 3.54 * LAT + 38.1,
-                -1.50 * Vmax - 0.090 * R25 + 0.09 * R15 + 1.54 * LAT + 68.8
-            )
-        elif model == "kokuso":
-            df["Rmax"] = np.where(
-                Pc <= 950,
-                80 - 0.769 * (950-Pc),
-                80 + 1.633 * (Pc-950)
-            )
-        elif model == "pari":
-            df["Rmax"] = 94.89 * np.exp((Pc - 967)/61.5)
-
-        elif model == "kisho":
-            df["Rmax"] = 52.125 * np.exp((Pc - 952.7)/44.09)
-        
-        # DataFrameを更新したので、set_linestring()が自動実行される    
+        df = self.df.copy()
+        df["Rmax"] = cal_rmax(df, model)
         self.df = df
 
     def interpolate_by_cumulative_distance(self, constant_velocity: float, time_interval_hours: float = 1.0):
